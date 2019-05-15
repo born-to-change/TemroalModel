@@ -23,7 +23,8 @@ def video_to_frames(root, output_dir):
     #     frame_list = os.path.join(root, vid)
     #     if not os.path.exists(frame_list):
     #         vid_frames = os.path.join(output_dir, vid)
-    video2imgage(root, output_dir)
+    if not os.path.exists(os.path.join(output_dir)):
+        video2imgage(root, output_dir)
     return output_dir
 
 
@@ -42,29 +43,33 @@ def video_to_tensor(pic):
 image_tmpl="img_{:05d}.jpg"
 flow_tmpl="{}_{:05d}.jpg"
 
-def load_rgb_frames(image_dir, vid, nf):
-  frames = []
-  for i in range(nf):
-      img = cv2.imread(os.path.join(image_dir, vid, ))
-  
-  for i in range(start, start+num, 3):
-    img = cv2.imread(os.path.join(image_dir, vid, image_tmpl.format(i)))#[:, :, [2, 1, 0]]
-    # print(os.path.join(image_dir, vid, image_tmpl.format(i)))
-    w,h,c = img.shape
-    if w < 226 or h < 226:
-        d = 226.-min(w,h)
-        sc = 1+d/min(w,h)
-        img = cv2.resize(img,dsize=(0,0),fx=sc,fy=sc)
-    img = (img/255.)*2 - 1
-    frames.append(img)
-  return np.asarray(frames, dtype=np.float32)
+def load_rgb_frames(image_dir, vid, start, num, label_dict):
 
-
-def load_flow_frames(image_dir, vid, start, num):
     frames = []
+    labels = []
+    for i in range(start, start+num, 3):
+        labels.append(label_dict[i])
+        img = cv2.imread(os.path.join(image_dir, vid+'_crop', str(i)+'.jpg'))  # [:, :, [2, 1, 0]]
+        # print(os.path.join(image_dir, vid, image_tmpl.format(i)))
+        w, h, c = img.shape
+        if w < 226 or h < 226:
+            d = 226. - min(w, h)
+            sc = 1 + d / min(w, h)
+            img = cv2.resize(img, dsize=(0, 0), fx=sc, fy=sc)
+        img = (img / 255.) * 2 - 1
+        frames.append(img)
+    return np.asarray(frames, dtype=np.float32), labels
+
+
+
+
+def load_flow_frames(image_dir, vid, start, num, label_dict):
+    frames = []
+    labels=[]
     for i in range(start, start + num, 3):
-        imgx = cv2.imread(os.path.join(image_dir, vid, flow_tmpl.format('flow_x', i)), cv2.IMREAD_GRAYSCALE)
-        imgy = cv2.imread(os.path.join(image_dir, vid, flow_tmpl.format('flow_y', i)), cv2.IMREAD_GRAYSCALE)
+        labels.append(label_dict[i])
+        imgx = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_x', i)), cv2.IMREAD_GRAYSCALE)
+        imgy = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_y', i)), cv2.IMREAD_GRAYSCALE)
 
         w, h = imgx.shape
         if w < 224 or h < 224:
@@ -77,7 +82,7 @@ def load_flow_frames(image_dir, vid, start, num):
         imgy = (imgy / 255.) * 2 - 1
         img = np.asarray([imgx, imgy]).transpose([1, 2, 0])
         frames.append(img)
-    return np.asarray(frames, dtype=np.float32)
+    return np.asarray(frames, dtype=np.float32), labels
 
 
 def make_dataset(output_dir, split_file, mapping_file, gth_dir, numclass):
@@ -100,10 +105,11 @@ def make_dataset(output_dir, split_file, mapping_file, gth_dir, numclass):
         gth_list = [actions_dict[x] for x in gth_list]
 
         video = vid.split('.')[0]
-        vid_frame_path = os.path.join(output_dir, video)
-        vid_frames = open(vid_frame_path, 'r')
-        vid_frames_list = vid_frames.read()
-        vid_frames.close()
+        vid_frame_path = os.path.join(output_dir, video+'_crop')
+        vid_frames_list = os.listdir(vid_frame_path)
+        # vid_frames = open(vid_frame_path, 'r')
+        # vid_frames_list = vid_frames.read()
+        # vid_frames.close()
 
         num_frames = min(len(vid_frames_list), len(gth_list))
         dataset.append((video, gth_list[:num_frames], num_frames))
@@ -113,9 +119,10 @@ def make_dataset(output_dir, split_file, mapping_file, gth_dir, numclass):
 
 
 class Merl(data_util.Dataset):
-    def __init__(self, split_file, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=None, feature_dir='', num=0):
-        self.root = video_to_frames(root, output_dir)
-
+    def __init__(self, split_file, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=None, save_dir='', num=0):
+        self.root = output_dir
+        self.save_dir = save_dir
+        self.mode = mode
         self.split_file = split_file
         self.transforms = transforms
         self.data = make_dataset(output_dir, split_file, mapping_file, gth_dir, numclass)
@@ -124,19 +131,36 @@ class Merl(data_util.Dataset):
     def __getitem__(self, index):
         vid, label, nf = self.data[index]
         clips = []
-
-        if os.path.exists(os.path.join(self.feature_dir, vid + '.npy')):
+        gt = []
+        if os.path.exists(os.path.join(self.save_dir, vid + '.npy')):
             return 0, 0, vid
-        if self.mode == 'rgb':
-            imgs = load_rgb_frames(self.root, vid, nf)
-        else:
-            imgs = load_flow_frames(self.root, vid)
 
-        imgs = self.transforms(imgs)
-        clips.append(video_to_tensor(imgs))
+        label_dict={}
+        for x in range(1, nf+1):
+            label_dict[x] = label[x-1]
+
+        during = 48
+        if nf>15000:
+            during =48
+        if nf>30000:
+            during = 96
+        for i in range(0, nf+1, during):
+            if i+49>nf:
+                continue
+            else:
+                start_frame = max(i, 1)
+            if self.mode == 'rgb':
+                imgs, labels = load_rgb_frames(self.root, vid, start_frame, 48, label_dict)
+            else:
+                imgs, labels = load_flow_frames(self.root, vid, start_frame, 48, label_dict)
+            imgs = self.transforms(imgs)
+            clips.append(video_to_tensor(imgs))
+            gt.append(labels)
 
 
-        return clips, torch.from_numpy(label), vid
+
+
+        return clips, gt, vid
 
 
     def __len__(self):

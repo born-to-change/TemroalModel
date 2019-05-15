@@ -11,7 +11,8 @@ from torchvision import datasets, transforms
 import numpy as np
 from data.dataset import Merl
 from models.i3d import InceptionI3d
-
+from data import videotransforms
+import os
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-mode', type=str, help='rgb or flow')
@@ -19,33 +20,129 @@ parser.add_argument('-load_model', type=str)
 parser.add_argument('-root', type=str)
 parser.add_argument('-split', type=str)
 parser.add_argument('-gpu', type=str)
-parser.add_argument('-save_dir', type=str)
+parser.add_argument('-save_model', type=str)
 parser.add_argument('-mapping_file', type=str)
 parser.add_argument('-gth_dir', type=str)
 parser.add_argument('-output_dir', type=str)
 
 
 args = parser.parse_args()
+os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+def run(init_lr=0.1, max_steps=64e3, mode='flow', root='', split='', batch_size=1, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=5):
+    train_trnsforms = transforms.Compose([videotransforms.RandomCrop(224),
+                                          videotransforms.RandomHorizontalFlip(),])
+    test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
 
 
-def run(mode='rgb', root='', split='', batch_size=1, output_dir='' ,load_model='', save_dir='', mapping_file='', gth_dir='', numclass=5):
-    dataset = Merl( split, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=None, feature_dir='', num=0)
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False, num_workers=1,
-                                             pin_memory=True)
-    # if mode == 'flow':
-    #     i3d = InceptionI3d(400, in_channels=2)
-    # else:
-    #     i3d = InceptionI3d(400, in_channels=3)
-    # i3d.replace_logits(400)
-    # i3d.load_state_dict(torch.load(load_model))
+    dataset = Merl( split, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=train_trnsforms, save_dir='', num=0)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False,pin_memory=True)
+    if mode == 'flow':
+        i3d = InceptionI3d(400, in_channels=2)
+        i3d.replace_logits(400)
+        i3d.load_state_dict(torch.load('../models/flow_imagenet.pt'))
+    else:
+        i3d = InceptionI3d(400, in_channels=3)
+        i3d.replace_logits(400)
+        i3d.load_state_dict(torch.load('../models/rgb_imagenet.pt'))
+
+    i3d.cuda()
+
     for data in dataloader:
         # get the inputs
         inputs, labels, name = data
+        i = 0
+        if os.path.exists(os.path.join(save_model, name[0] + '.npy')):
+            continue
+
+        for input in inputs:
+            i += 1
+            input = Variable(input.cuda(), volatile=True)
+
+            features = i3d.extract_features(input)
+            new_path = os.path.join(save_model, name[0], mode)
+            if not os.path.exists(new_path):
+                os.makedirs(new_path)
+            np.save(os.path.join(new_path, str(i)), features.squeeze(0).permute(1, 2, 3, 0).data.cpu().numpy())
+
+
+
+
+    # lr = init_lr
+    # optimizer = optim.SGD(i3d.parameters(), lr=lr, momentum=0.9, weight_decay=0.0000001)
+    # lr_sched = optim.lr_scheduler.MultiStepLR(optimizer, [300, 1000])
+    #
+    # num_steps_per_update = 4  # accum gradient
+    # steps = 0
+    # # train it
+    # while steps < max_steps:  # for epoch in range(num_epochs):
+    #     print 'Step {}/{}'.format(steps, max_steps)
+    #     print '-' * 10
+    #
+    #     # Each epoch has a training and validation phase
+    #     for phase in ['train', 'val']:
+    #         if phase == 'train':
+    #             i3d.train(True)
+    #         else:
+    #             i3d.train(False)  # Set model to evaluate mode
+    #
+    #         tot_loss = 0.0
+    #         tot_loc_loss = 0.0
+    #         tot_cls_loss = 0.0
+    #         num_iter = 0
+    #         optimizer.zero_grad()
+    #
+    #         # Iterate over data.
+    #         for data in dataloader:
+    #             num_iter += 1
+    #             # get the inputs
+    #             inputs, labels, _ = data        # inputs:(bz,c,frames,h,w)
+    #             # inputs = torch.from_numpy(np.array(inputs))
+    #             # labels = torch.from_numpy(np.array(labels))
+    #             # wrap them in Variable
+    #             inputs = Variable(inputs)
+    #             t = inputs.size(2)
+    #             labels = Variable(labels)
+    #
+    #             per_frame_logits = i3d(inputs)
+    #             # upsample to input size
+    #             per_frame_logits = F.upsample(per_frame_logits, t, mode='linear')
+    #
+    #             # compute localization loss
+    #             loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
+    #             tot_loc_loss += loc_loss.data[0]
+    #
+    #             # compute classification loss (with max-pooling along time B x C x T)
+    #             cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
+    #                                                           torch.max(labels, dim=2)[0])
+    #             tot_cls_loss += cls_loss.data[0]
+    #
+    #             loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
+    #             tot_loss += loss.data[0]
+    #             loss.backward()
+    #
+    #             if num_iter == num_steps_per_update and phase == 'train':
+    #                 steps += 1
+    #                 num_iter = 0
+    #                 optimizer.step()
+    #                 optimizer.zero_grad()
+    #                 lr_sched.step()
+    #                 if steps % 10 == 0:
+    #                     print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format(phase, tot_loc_loss / (
+    #                                 10 * num_steps_per_update), tot_cls_loss / (10 * num_steps_per_update),
+    #                                                                                          tot_loss / 10)
+    #                     # save model
+    #                     torch.save(i3d.module.state_dict(), save_model + str(steps).zfill(6) + '.pt')
+    #                     tot_loss = tot_loc_loss = tot_cls_loss = 0.
+    #         if phase == 'val':[]
+    #             print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format(phase, tot_loc_loss / num_iter,
+    #                                                                                  tot_cls_loss / num_iter, (
+    #                                                                                              tot_loss * num_steps_per_update) / num_iter)
 
 
 if __name__ == '__main__':
     run(mode=args.mode, root=args.root, split=args.split, output_dir=args.output_dir,
-        load_model=args.load_model, save_dir=args.save_dir, mapping_file=args.mapping_file, gth_dir=args.gth_dir)
+        load_model=args.load_model, save_model=args.save_model, mapping_file=args.mapping_file, gth_dir=args.gth_dir)
     # run('/Users/user/Desktop/merl/dataset', '/Users/user/Desktop/merl/splits/train.txt', save_dir=)
 
-    # -load_model -root /Users/user/Desktop/merl/dataset -split /Users/user/Desktop/merl/splits/train.txt -save_dir  /Users/user/Desktop/merl/feature -mapping_file /Users/user/Desktop/merl/mapping.txt -gth_dir /Users/user/Desktop/merl/groundTruth -output_dir /Users/user/Desktop/merl/frames
+    # -load_model -root /disk2/lzq/Videos_MERL_Shopping_Dataset -split /disk2/lzq/data/MERL/splits/train.txt -save_dir /disk2/lzq/data/MERL/i3d_feature -mapping_file /disk2/lzq/data/MERL/mapping.txt -gth_dir /disk2/lzq/data/MERL/groundTruth -output_dir /disk2/lzq/data/MERL/frames
