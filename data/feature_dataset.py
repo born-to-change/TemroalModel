@@ -47,7 +47,7 @@ def load_rgb_frames(image_dir, vid, start, num):
 
     frames = []
     labels = []
-    for i in range(start, start+num, 3):
+    for i in range(start, start+num):
 
         img = cv2.imread(os.path.join(image_dir, vid+'_crop', str(i)+'.jpg'))  # [:, :, [2, 1, 0]]
         # print(os.path.join(image_dir, vid, image_tmpl.format(i)))
@@ -66,7 +66,7 @@ def load_rgb_frames(image_dir, vid, start, num):
 def load_flow_frames(image_dir, vid, start, num):
     frames = []
 
-    for i in range(start, start + num, 3):
+    for i in range(start, start + num):
         imgx = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_x', i)), cv2.IMREAD_GRAYSCALE)
         imgy = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_y', i)), cv2.IMREAD_GRAYSCALE)
 
@@ -136,17 +136,17 @@ class Merl(data_util.Dataset):
     def __getitem__(self, index):
         vid, label, nf = self.data[index]
 
-        start_f = random.randint(1,nf-64*3)
+        #start_f = random.randint(1,nf)
 
         if self.mode == 'rgb':
-            imgs = load_rgb_frames(self.root, vid, start_f, 64*3)
+            imgs = load_rgb_frames(self.root, vid, 1, nf)
         else:
-            imgs = load_flow_frames(self.root, vid, start_f, 64*3)
-        label = label[:, start_f:start_f + 64*3:3]
+            imgs = load_flow_frames(self.root, vid, 1, nf)
+        label = label[:, 1:nf]
 
         imgs = self.transforms(imgs)
 
-        return video_to_tensor(imgs), torch.from_numpy(label)
+        return video_to_tensor(imgs), torch.from_numpy(label), vid
 
         # clips = torch.FloatTensor()
         # gt = []

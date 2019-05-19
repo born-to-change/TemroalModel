@@ -29,7 +29,7 @@ parser.add_argument('-output_dir', type=str)
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-def run(init_lr=0.1, max_steps=64e3, mode='flow', root='', split='', batch_size=1, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=5):
+def run(init_lr=0.1, max_steps=2e3, mode='flow', root='', split='', batch_size=8, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=5):
     train_transforms = transforms.Compose([videotransforms.RandomCrop(224),
                                           videotransforms.RandomHorizontalFlip(),])
     test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
@@ -81,62 +81,64 @@ def run(init_lr=0.1, max_steps=64e3, mode='flow', root='', split='', batch_size=
         print '-' * 10
 
         # Each epoch has a training and validation phase
-        for phase in ['train', 'val']:
-            if phase == 'train':
-                i3d.train(True)
-            else:
-                i3d.train(False)  # Set model to evaluate mode
+        # for phase in ['train']:
+        #     if phase == 'train':
+        #         i3d.train(True)
+        #     else:
+        #         i3d.train(False)  # Set model to evaluate mode
+        i3d.train(True)
+        tot_loss = 0.0
+        tot_loc_loss = 0.0
+        tot_cls_loss = 0.0
+        num_iter = 0
+        optimizer.zero_grad()
 
-            tot_loss = 0.0
-            tot_loc_loss = 0.0
-            tot_cls_loss = 0.0
-            num_iter = 0
-            optimizer.zero_grad()
+        # Iterate over data.
+        for data in dataloader:
+            num_iter += 1
+            # get the inputs
+            inputs, labels = data  # inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
 
-            # Iterate over data.
-            for data in dataloader:
-                num_iter += 1
-                # get the inputs
-                inputs, labels = data
+            # wrap them in Variable
+            inputs = Variable(inputs.cuda())
+            t = inputs.size(2)  # frames
+            labels = Variable(labels.cuda())
 
-                # wrap them in Variable
-                inputs = Variable(inputs.cuda())
-                t = inputs.size(2)
-                labels = Variable(labels.cuda())
+            per_frame_logits = i3d(inputs)  # shape:(bz, class, 7)
+            # upsample to input size
+            per_frame_logits = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64
 
-                per_frame_logits = i3d(inputs)
-                # upsample to input size
-                per_frame_logits = F.upsample(per_frame_logits, t, mode='linear')
+            # compute localization loss
+            loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)  # sigmoid layer+ BCEloss
+            tot_loc_loss += loc_loss.data[0]
 
-                # compute localization loss
-                loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)
-                tot_loc_loss += loc_loss.data[0]
+            # compute classification loss (with max-pooling along time B x C x T)
+            cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
+                                                          torch.max(labels, dim=2)[0])  # (bz, 6)
+            tot_cls_loss += cls_loss.data[0]
 
-                # compute classification loss (with max-pooling along time B x C x T)
-                cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
-                                                              torch.max(labels, dim=2)[0])
-                tot_cls_loss += cls_loss.data[0]
+            loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
+            tot_loss += loss.data[0]
+            loss.backward()
 
-                loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
-                tot_loss += loss.data[0]
-                loss.backward()
+            if num_iter == num_steps_per_update:  # and phase == 'train':
+                steps += 1
+                num_iter = 0
+                optimizer.step()
+                optimizer.zero_grad()
+                lr_sched.step()
+                if steps % 10 == 0:
+                    print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format('train', tot_loc_loss / (
+                            10 * num_steps_per_update), tot_cls_loss / (10 * num_steps_per_update), tot_loss / 10)
+                    # save model
+                    torch.save(i3d.module.state_dict(), save_model + str(steps).zfill(6) + '.pt')
+                    tot_loss = tot_loc_loss = tot_cls_loss = 0.
 
-                if num_iter == num_steps_per_update and phase == 'train':
-                    steps += 1
-                    num_iter = 0
-                    optimizer.step()
-                    optimizer.zero_grad()
-                    lr_sched.step()
-                    if steps % 10 == 0:
-                        print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format(phase, tot_loc_loss / (
-                                10 * num_steps_per_update), tot_cls_loss / (10 * num_steps_per_update), tot_loss / 10)
-                        # save model
-                        torch.save(i3d.module.state_dict(), save_model + str(steps).zfill(6) + '.pt')
-                        tot_loss = tot_loc_loss = tot_cls_loss = 0.
-                if phase == 'val':
-                    print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format(phase, tot_loc_loss / num_iter,
-                                                                                         tot_cls_loss / num_iter, (
-                                                                                                 tot_loss * num_steps_per_update) / num_iter)
+
+                # if phase == 'val':
+                #     print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format(phase, tot_loc_loss / num_iter,
+                #                                                                          tot_cls_loss / num_iter, (
+                #                                                                                  tot_loss * num_steps_per_update) / num_iter)
 
 
 
