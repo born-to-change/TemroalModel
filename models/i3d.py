@@ -90,7 +90,8 @@ class Unit3D(nn.Module):
         # compute 'same' padding
         (batch, channel, t, h, w) = x.size()
         #print t,h,w
-        out_t = np.ceil(float(t) / float(self._stride[0]))
+        out_t = np.ceil(float(t) / float(self._stride[0]))  # ceil:取整数上限
+        #np.around、np.floor、np.ceil、np.where https://blog.csdn.net/tz_zs/article/details/80775256
         out_h = np.ceil(float(h) / float(self._stride[1]))
         out_w = np.ceil(float(w) / float(self._stride[2]))
         #print out_t, out_h, out_w

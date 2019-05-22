@@ -19,4 +19,4 @@ import os
 
 
 label = np.zeros(1, np.int64)
-print(label)
+print(np.zeros(1, np.int64))
