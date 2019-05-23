@@ -1,3 +1,4 @@
+#encoding:utf8
 from torch.nn.utils import weight_norm
 import torch
 import torch.nn as nn
@@ -123,7 +124,7 @@ class ResNet(nn.Module):
         self.inplanes = 64
         super(ResNet, self).__init__()
         self.conv1 = nn.Conv3d(
-            3,
+            2,
             64,
             kernel_size=7,
             stride=(1, 2, 2),
@@ -218,56 +219,6 @@ def get_fine_tuning_parameters(model, ft_begin_index):
 
     return parameters
 
-
-def resnet10(**kwargs):
-    """Constructs a ResNet-18 model.
-    """
-    model = ResNet(BasicBlock, [1, 1, 1, 1], **kwargs)
-    return model
-
-
-def resnet18(**kwargs):
-    """Constructs a ResNet-18 model.
-    """
-    model = ResNet(BasicBlock, [2, 2, 2, 2], **kwargs)
-    return model
-
-
-def resnet34(**kwargs):
-    """Constructs a ResNet-34 model.
-    """
-    model = ResNet(BasicBlock, [3, 4, 6, 3], **kwargs)
-    return model
-
-
-def resnet50(**kwargs):
-    """Constructs a ResNet-50 model.
-    """
-    model = ResNet(Bottleneck, [3, 4, 6, 3], **kwargs)
-    return model
-
-
-def resnet101(**kwargs):
-    """Constructs a ResNet-101 model.
-    """
-    model = ResNet(Bottleneck, [3, 4, 23, 3], **kwargs)
-    return model
-
-
-def resnet152(**kwargs):
-    """Constructs a ResNet-101 model.
-    """
-    model = ResNet(Bottleneck, [3, 8, 36, 3], **kwargs)
-    return model
-
-
-def resnet200(**kwargs):
-    """Constructs a ResNet-101 model.
-    """
-    model = ResNet(Bottleneck, [3, 24, 36, 3], **kwargs)
-    return model
-
-
 class Chomp1d(nn.Module):
     def __init__(self, chomp_size):
         super(Chomp1d, self).__init__()
@@ -312,6 +263,25 @@ class TemporalBlock(nn.Module):
         res = x if self.downsample is None else self.downsample(x)
         return self.relu(out + res)
 
+class TCN(nn.Module):
+    def __init__(self, input_size, n_classes, num_channels, kernel_size, dropout):
+        super(TCN, self).__init__()
+        self.cnn = ResNet(Bottleneck, [2, 2, 2, 2],
+               shortcut_type='B',
+               sample_size=112,
+               sample_duration=32)
+        self.tcn = TemporalConvNet(input_size, num_channels, kernel_size=kernel_size, dropout=dropout)
+        #self.linear = nn.Linear(num_channels[-1], n_classes)
+
+    def forward(self, inputs):
+        # Input: :math:`(N, C_{in}, D_{in}, H_{in}, W_{in})`
+        #inputs = inputs.squeeze().permute(1,0,2,3)
+        out = self.cnn(inputs)  # (1,2,64,224,224)
+        # out: (1, 152600)
+        y = self.tcn(out)
+        return y
+        #o = self.linear(y1[:, :, -1])
+        #return F.log_softmax(o, dim=1)
 
 class TemporalConvNet(nn.Module):
     #  inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
@@ -319,10 +289,7 @@ class TemporalConvNet(nn.Module):
         super(TemporalConvNet, self).__init__()
         layers = []
         num_levels = len(num_channels)
-        layers.append(ResNet(Bottleneck, [3, 4, 6, 3],  num_classes=6,
-                shortcut_type='B',
-                sample_size=8,
-                sample_duration=32))
+
         for i in range(num_levels):
             dilation_size = 2 ** i
             in_channels = num_inputs if i == 0 else num_channels[i-1]

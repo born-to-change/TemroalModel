@@ -136,13 +136,13 @@ class Merl(data_util.Dataset):
     def __getitem__(self, index):
         vid, label, nf = self.data[index]
 
-        start_f = random.randint(1,nf-64*3)
+        start_f = random.randint(1,nf-256*3)
 
         if self.mode == 'rgb':
-            imgs = load_rgb_frames(self.root, vid, start_f, 64*3)
+            imgs = load_rgb_frames(self.root, vid, start_f, 256*3)
         else:
-            imgs = load_flow_frames(self.root, vid, start_f, 64*3)
-        label = label[:, start_f:start_f + 64*3:3]
+            imgs = load_flow_frames(self.root, vid, start_f, 256*3)
+        label = label[:, start_f:start_f + 256*3:3]
 
         imgs = self.transforms(imgs)
 
