@@ -29,7 +29,7 @@ parser.add_argument('-output_dir', type=str)
 args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
-def run(init_lr=0.1, max_steps=10000, mode='flow', root='', split='', batch_size=1, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=5):
+def run(init_lr=0.1, max_steps=1000, mode='flow', root='', split='', batch_size=1, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=5):
     train_transforms = transforms.Compose([videotransforms.RandomCrop(224),
                                           videotransforms.RandomHorizontalFlip(),])
     test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
@@ -48,7 +48,7 @@ def run(init_lr=0.1, max_steps=10000, mode='flow', root='', split='', batch_size
     # i3d.replace_logits(6)
     # i3d.cuda()
     # i3d = nn.DataParallel(i3d)
-    model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[128]*6, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
+    model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[128]*8, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
     model.cuda()
 
 
