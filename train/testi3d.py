@@ -1,3 +1,5 @@
+#encoding:utf8
+
 import argparse
 import torch
 import torch.nn as nn
@@ -10,7 +12,7 @@ import torchvision
 from torchvision import datasets, transforms
 import numpy as np
 from data.dataset import Merl
-from models.EndToEnd import casualTCN
+from models.i3d import InceptionI3d
 from data import videotransforms
 import os
 
@@ -37,13 +39,19 @@ def run(init_lr=0.1, max_steps=1, mode='flow', root='', split='', batch_size=1, 
 
     dataset = Merl( split, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=train_transforms, save_dir='', num=0)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False,pin_memory=True)
+    if mode == 'flow':
+        i3d = InceptionI3d(6, in_channels=2)
 
-    model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[128]*8, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
-    model.load_state_dict(torch.load('/disk2/lzq/data/MERL/Results/sample8aTCN(8x128)/001000.pt'))
-    model.cuda()
-    #model = nn.DataParallel(model)
+        i3d.load_state_dict(torch.load('/disk2/lzq/data/MERL/checkpoints/002000.pt'))
+    else:
+        i3d = InceptionI3d(400, in_channels=3)
 
-    model.train(False)
+        i3d.load_state_dict(torch.load('../models/rgb_imagenet.pt'))
+    i3d.replace_logits(6)
+    i3d.cuda()
+
+    i3d.train(False)
+
     total = 0
     correct = 0
 
@@ -55,13 +63,18 @@ def run(init_lr=0.1, max_steps=1, mode='flow', root='', split='', batch_size=1, 
         # wrap them in Variable
         inputslist = input.split(128, 2)
         labelslist = labels.split(128, 2)
-        for i,inputs in enumerate(inputslist):
+
+        for i, inputs in enumerate(inputslist):
             inputs = Variable(inputs.cuda())
             t = inputs.size(2)  # frames
             labels = labelslist[i]
             labels = Variable(labels.cuda())
 
-            predictions = model(inputs)  # shape:(bz, class, L)
+
+            per_frame_logits = i3d(inputs)  # shape:(bz, class, 7)  128 ->15
+            # upsample to input size
+            predictions = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64  shape:(bz, class, L)
+
             _, predicted = torch.max(predictions, 1)  # output the last stage's result, 1 means dim=1 ==> (1, frames)
             predicted = predicted.squeeze()
             predicted = predicted.cpu().data.numpy()
@@ -77,40 +90,9 @@ def run(init_lr=0.1, max_steps=1, mode='flow', root='', split='', batch_size=1, 
 
 
 
-
-        # file_ptr = open('/disk2/lzq/data/MERL/mapping.txt', 'r')
-        # actions = file_ptr.read().split('\n')[:-1]
-        # file_ptr.close()
-        # actions_dict = dict()
-        #
-        #
-        #
-        #
-        # for a in actions:
-        #     actions_dict[a.split()[1]] = int(a.split()[0])
-        #
-        # for i in range(len(predicted)):
-        #     recognition = np.concatenate((recognition, [
-        #         actions_dict.keys()[actions_dict.values().index(predicted[i])]]))
-        #
-        # f_name = vid[0]
-        #
-        # f_ptr = open('/disk2/lzq/data/MERL/Results/eteallframex8/' + f_name, "w")
-        # f_ptr.write("### Frame level recognition: ###\n")
-        # f_ptr.write(' '.join(recognition))
-        # f_ptr.close()
-        # upsample to input size
-        # per_frame_logits = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64
-
-
-
-
-
-
-
 if __name__ == '__main__':
     run(mode=args.mode, root=args.root, split=args.split, output_dir=args.output_dir,
-        load_model=args.load_model, mapping_file=args.mapping_file, gth_dir=args.gth_dir)
+        load_model=args.load_model, save_model=args.save_model, mapping_file=args.mapping_file, gth_dir=args.gth_dir)
     # run('/Users/user/Desktop/merl/dataset', '/Users/user/Desktop/merl/splits/train.txt', save_dir=)
-# -mode flow -gpu 2 -root /disk2/lzq/Videos_MERL_Shopping_Dataset -split /disk2/lzq/data/MERL/splits/text.txt -mapping_file /disk2/lzq/data/MERL/mapping.txt -gth_dir /disk2/lzq/data/MERL/groundTruth -output_dir /disk2/lzq/data/MERL/opticalflow
+
     # -load_model -root /disk2/lzq/Videos_MERL_Shopping_Dataset -split /disk2/lzq/data/MERL/splits/train.txt -save_dir /disk2/lzq/data/MERL/i3d_feature -mapping_file /disk2/lzq/data/MERL/mapping.txt -gth_dir /disk2/lzq/data/MERL/groundTruth -output_dir /disk2/lzq/data/MERL/frames

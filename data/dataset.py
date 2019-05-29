@@ -66,7 +66,7 @@ def load_rgb_frames(image_dir, vid, start, num):
 def load_flow_frames(image_dir, vid, start, num):
     frames = []
 
-    for i in range(start, start + num):
+    for i in range(start, start + num, 30):
         imgx = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_x', i)), cv2.IMREAD_GRAYSCALE)
         imgy = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_y', i)), cv2.IMREAD_GRAYSCALE)
 

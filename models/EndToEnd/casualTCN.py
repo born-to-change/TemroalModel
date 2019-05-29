@@ -7,6 +7,8 @@ from functools import partial
 import torch.nn as nn
 import math
 import torch.utils.model_zoo as model_zoo
+from torchvision.models.resnet import model_urls
+
 
 def get_fine_tuning_parameters(model, ft_begin_index):
     if ft_begin_index == 0:
@@ -125,7 +127,7 @@ class ResNet(nn.Module):
         assert layers[depth], 'invalid detph for ResNet (depth should be one of 18, 34, 50, 101, 152, and 200)'
 
         self.inplanes = 64
-        self.conv1 = nn.Conv2d(2, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -215,9 +217,11 @@ class TemporalBlock(nn.Module):
         return self.relu(out + res)
 
 
+
 class TCN(nn.Module):
     def __init__(self, input_size, n_classes, num_channels, kernel_size, dropout):
         super(TCN, self).__init__()
+
         self.cnn = ResNet(inplanes=64, depth=18, num_classes=6)
         self.tcn = TemporalConvNet(input_size, num_channels, kernel_size=kernel_size, dropout=dropout)
         self.conv = nn.Conv1d(128, n_classes, kernel_size=1)

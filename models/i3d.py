@@ -1,3 +1,5 @@
+#encoding:utf8
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -334,5 +336,5 @@ class InceptionI3d(nn.Module):
     def extract_features(self, x):
         for end_point in self.VALID_ENDPOINTS:
             if end_point in self.end_points:
-                x = self._modules[end_point](x)
-        return self.avg_pool(x)
+                x = self._modules[end_point](x)  #  L:256 -32
+        return self.avg_pool(x)   #  L:32 ->7
