@@ -44,10 +44,12 @@ def run(init_lr=0.1, max_steps=1, mode='flow', root='', split='', batch_size=1, 
 
         i3d.load_state_dict(torch.load('/disk2/lzq/data/MERL/checkpoints/002000.pt'))
     else:
-        i3d = InceptionI3d(400, in_channels=3)
+        i3d = InceptionI3d(6, in_channels=3)
+        i3d.replace_logits(6)
+        i3d = nn.DataParallel(i3d)
 
-        i3d.load_state_dict(torch.load('../models/rgb_imagenet.pt'))
-    i3d.replace_logits(6)
+        i3d.module.load_state_dict(torch.load('/disk2/lzq/data/MERL/Results/i3drgb/000400.pt'))
+
     i3d.cuda()
 
     i3d.train(False)
@@ -59,34 +61,33 @@ def run(init_lr=0.1, max_steps=1, mode='flow', root='', split='', batch_size=1, 
 
         # get the inputs
         input, labels, vid = data  # inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
+        inputs = Variable(input.cuda())
+        t = inputs.size(2)  # frames
+        # labels = labelslist[i]
+        labels = Variable(labels.cuda())
 
-        # wrap them in Variable
-        inputslist = input.split(128, 2)
-        labelslist = labels.split(128, 2)
+        per_frame_logits = i3d(inputs)  # shape:(bz, class, 7)  128 ->15
+        # upsample to input size
+        predictions = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64  shape:(bz, class, L)
 
-        for i, inputs in enumerate(inputslist):
-            inputs = Variable(inputs.cuda())
-            t = inputs.size(2)  # frames
-            labels = labelslist[i]
-            labels = Variable(labels.cuda())
+        _, predicted = torch.max(predictions, 1)  # output the last stage's result, 1 means dim=1 ==> (1, frames)
+        predicted = predicted.squeeze()
+        predicted = predicted.cpu().data.numpy()
 
+        labels = labels.cpu().data.numpy()
+        labels = list(labels.argmax(axis=1).squeeze())
 
-            per_frame_logits = i3d(inputs)  # shape:(bz, class, 7)  128 ->15
-            # upsample to input size
-            predictions = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64  shape:(bz, class, L)
-
-            _, predicted = torch.max(predictions, 1)  # output the last stage's result, 1 means dim=1 ==> (1, frames)
-            predicted = predicted.squeeze()
-            predicted = predicted.cpu().data.numpy()
-
-            labels = labels.cpu().data.numpy()
-            labels = list(labels.argmax(axis=1).squeeze())
-
-            for i in range(len(labels)):
-                total += 1
-                if labels[i] == predicted[i]:
-                    correct += 1
+        for i in range(len(labels)):
+            total += 1
+            if labels[i] == predicted[i]:
+                correct += 1
     print("Acc: %.4f" % (100 * float(correct) / total))
+        # wrap them in Variable
+        #inputslist = input.split(64, 2)
+        #labelslist = labels.split(64, 2)
+
+        #for i, inputs in enumerate(inputslist):
+
 
 
 

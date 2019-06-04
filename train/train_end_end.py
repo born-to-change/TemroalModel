@@ -10,7 +10,7 @@ import torchvision
 from torchvision import datasets, transforms
 import numpy as np
 from data.dataset import Merl
-from models.EndToEnd import casualTCN
+from models.EndToEnd import msTCN, casualTCN
 from data import videotransforms
 import os
 
@@ -30,7 +30,7 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 def run(init_lr=0.1, max_steps=1000, mode='flow', root='', split='', batch_size=4, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=6):
-    train_transforms = transforms.Compose([videotransforms.RandomCrop(224),
+    train_transforms = transforms.Compose([videotransforms.CenterCrop(224),
                                           videotransforms.RandomHorizontalFlip(),])
     test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
 
@@ -47,8 +47,9 @@ def run(init_lr=0.1, max_steps=1000, mode='flow', root='', split='', batch_size=
     #     i3d.load_state_dict(torch.load('../models/rgb_imagenet.pt'))
     # i3d.replace_logits(6)
     # i3d.cuda()
-    # i3d = nn.DataParallel(i3d)
-    model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[128]*8, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
+    # i3d = nn.DataParallel(i3d) num_stages, num_layers, num_f_maps, features_dim, num_classes
+    #model = msTCN.MultiStageModel(num_stages=6, num_layers=10, num_f_maps=64, dim=512, num_classes=6)
+    model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[64]*8, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
 
     model.cuda()
     model = nn.DataParallel(model)
@@ -59,10 +60,11 @@ def run(init_lr=0.1, max_steps=1000, mode='flow', root='', split='', batch_size=
     lr_sched = optim.lr_scheduler.MultiStepLR(optimizer, [300, 1000])
 
     num_steps_per_update = 4  # accum gradient
+    epoch = 0
     steps = 0
     # train it
-    while steps < max_steps:  # for epoch in range(num_epochs):
-        print 'Step {}/{}'.format(steps, max_steps)
+    while epoch < max_steps:  # for epoch in range(num_epochs):
+        print 'epoch {}/{}'.format(steps, max_steps)
         print '-' * 10
 
         # Each epoch has a training and validation phase
@@ -73,50 +75,85 @@ def run(init_lr=0.1, max_steps=1000, mode='flow', root='', split='', batch_size=
         #         i3d.train(False)  # Set model to evaluate mode
         model.train(True)
         tot_loss = 0.0
-        tot_loc_loss = 0.0
-        tot_cls_loss = 0.0
+
         num_iter = 0
-        optimizer.zero_grad()
+        #optimizer.zero_grad()
 
         # Iterate over data.
+        epoch_loss = 0
+        correct = 0
+        total = 0
+
+        #
+        # tot_loss = 0.
+        # for data in dataloader:
+        #     inputs, labels, vid = data
+        #     inputslist = inputs.split(256, 2)
+        #     labelslist = labels.split(256, 2)
+        #     for i, inputs in enumerate(inputslist):
+        #         inputs = Variable(inputs.cuda())
+        #         t = inputs.size(2)  # frames
+        #         labels = labelslist[i]
+        #         labels = Variable(labels.cuda())
+        #         optimizer = optim.Adam(model.parameters(), lr=0.0005)
+        #         optimizer.zero_grad()
+        #         predictions = model(inputs)
+        #
+        #         loss = 0
+        #         for prediction in predictions:
+        #             loss = F.binary_cross_entropy_with_logits(prediction, labels)  #       sigmoid layer+ BCEloss
+        #             tot_loss += loss.data[0]
+        #
+        #         loss.backward()
+        #         optimizer.step()
+        #
+        #         #lr_sched.step()
+        #
+        # print '{} Loc Loss: {:.4f}  Tot Loss: {:.4f}'.format('train', tot_loss / (10), tot_loss / 10)
+        #
+        # torch.save(model.state_dict(), save_model + str(epoch).zfill(6) + '.pt')
+        # epoch += 1
+
+        tot_loc_loss = 0
         for data in dataloader:
-            input, labels, vid = data     # inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
-            inputslist = input.split(128, 2)
-            labelslist = labels.split(128, 2)
-            for i, inputs in enumerate(inputslist):
-                inputs = Variable(inputs.cuda())
-                t = inputs.size(2)  # frames
-                labels = labelslist[i]
-                labels = Variable(labels.cuda())
+            inputs, labels, vid = data     # inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
+            inputs = Variable(inputs.cuda())
+            t = inputs.size(2)  # frames
 
+            labels = Variable(labels.cuda())
 
-                per_frame_logits = model(inputs)  # shape:(bz, class, 7)
-                # upsample to input size
-                # per_frame_logits = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64
+            per_frame_logits = model(inputs)  # shape:(bz, class, 7)
+            # upsample to input size
+            # per_frame_logits = F.upsample(per_frame_logits, t, mode='linear')  # shape[2]: 7->64
 
-                # compute localization loss
-                loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)  # sigmoid layer+ BCEloss
-                tot_loc_loss += loc_loss.data[0]
+            # compute localization loss
+            loc_loss = F.binary_cross_entropy_with_logits(per_frame_logits, labels)  # sigmoid layer+ BCEloss
+            tot_loc_loss += loc_loss.data[0]
 
-                # compute classification loss (with max-pooling along time B x C x T)
-                # cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
-                #                                               torch.max(labels, dim=2)[0])  # (bz, 6)
-                # tot_cls_loss += cls_loss.data[0]
+            # compute classification loss (with max-pooling along time B x C x T)
+            # cls_loss = F.binary_cross_entropy_with_logits(torch.max(per_frame_logits, dim=2)[0],
+            #                                               torch.max(labels, dim=2)[0])  # (bz, 6)
+            # tot_cls_loss += cls_loss.data[0]
 
-                # loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
-                loss = loc_loss
-                tot_loss += loss.data[0]
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-                lr_sched.step()
+            # loss = (0.5 * loc_loss + 0.5 * cls_loss) / num_steps_per_update
+            loss = loc_loss
+            tot_loss += loss.data[0]
+            loss.backward()
+            optimizer.step()
+            optimizer.zero_grad()
+            lr_sched.step()
         steps += 1
+        print '{} Loc Loss: {:.4f}  Tot Loss: {:.4f}'.format('train', tot_loc_loss / (
+            10), tot_loss / 10)
         tot_loss = tot_loc_loss = 0.
         if steps % 10 == 0:
-            print '{} Loc Loss: {:.4f}  Tot Loss: {:.4f}'.format('train', tot_loc_loss / (
-                10), tot_loss / 10)
+            # print '{} Loc Loss: {:.4f}  Tot Loss: {:.4f}'.format('train', tot_loc_loss / (
+            #     10), tot_loss / 10)
             # save model
             torch.save(model.state_dict(), save_model + str(steps).zfill(6) + '.pt')
+
+
+
 
                 # if phase == 'val':
                 #     print '{} Loc Loss: {:.4f} Cls Loss: {:.4f} Tot Loss: {:.4f}'.format(phase, tot_loc_loss / num_iter,

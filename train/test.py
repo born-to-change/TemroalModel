@@ -13,6 +13,7 @@ from data.dataset import Merl
 from models.EndToEnd import casualTCN
 from data import videotransforms
 import os
+from models.classifyModel.C3D import C3D
 
 parser = argparse.ArgumentParser()
 parser.add_argument('-mode', type=str, help='rgb or flow')
@@ -30,50 +31,64 @@ args = parser.parse_args()
 os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
 
 def run(init_lr=0.1, max_steps=1, mode='flow', root='', split='', batch_size=1, output_dir='' ,load_model='', save_model='', mapping_file='', gth_dir='', numclass=5):
-    train_transforms = transforms.Compose([videotransforms.RandomCrop(224),
+    train_transforms = transforms.Compose([videotransforms.RandomCrop(112),
                                           videotransforms.RandomHorizontalFlip(),])
     test_transforms = transforms.Compose([videotransforms.CenterCrop(224)])
 
 
     dataset = Merl( split, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=train_transforms, save_dir='', num=0)
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=False,pin_memory=True)
+    model = C3D()
+    #model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[64] * 8, kernel_size=3, dropout=0.2)
+    #model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[128]*8, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
 
-    model = casualTCN.TCN(input_size=512, n_classes=6, num_channels=[128]*8, kernel_size=3, dropout=0.2) # inputchannels,nclass,channelsize,kernel,dropout
-    model.load_state_dict(torch.load('/disk2/lzq/data/MERL/Results/sample8aTCN(8x128)/001000.pt'))
-    model.cuda()
     #model = nn.DataParallel(model)
 
+    model.load_state_dict(torch.load('/disk2/lzq/data/MERL/Results/c3d16x2/000400.pt'))
+    model.cuda()
     model.train(False)
     total = 0
     correct = 0
+    epoch =0
+    while epoch < 30:
+        epoch +=1
+        print('{}epoch start'.format(epoch))
+        for data in dataloader:
+            inputs, labels, vid = data  # inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
 
-    for data in dataloader:
-
-        # get the inputs
-        input, labels, vid = data  # inputs: (bz, channels,frames,224,224)  labels: (bz, class, frames)
-
-        # wrap them in Variable
-        inputslist = input.split(128, 2)
-        labelslist = labels.split(128, 2)
-        for i,inputs in enumerate(inputslist):
+            # wrap them in Variable
+            # inputslist = input.split(128, 2)
+            # labelslist = labels.split(128, 2)
+            # for i,inputs in enumerate(inputslist):
             inputs = Variable(inputs.cuda())
             t = inputs.size(2)  # frames
-            labels = labelslist[i]
+            # labels = labelslist[i]
             labels = Variable(labels.cuda())
 
-            predictions = model(inputs)  # shape:(bz, class, L)
-            _, predicted = torch.max(predictions, 1)  # output the last stage's result, 1 means dim=1 ==> (1, frames)
-            predicted = predicted.squeeze()
-            predicted = predicted.cpu().data.numpy()
+            predictions = model(inputs)  # shape:(bz, class, L) classify: (bz, class)
 
-            labels = labels.cpu().data.numpy()
-            labels = list(labels.argmax(axis=1).squeeze())
+            _, predicted = torch.max(predictions.cpu().data,
+                                     1)  # output the last stage's result, 1 means dim=1 ==> (1, frames)
+            labels = labels.squeeze()
+            _, gth = torch.max(labels.cpu().data, 0)
+            total += 1
+            if gth.numpy()[0] == predicted.numpy()[0]:
+                correct += 1
 
-            for i in range(len(labels)):
-                total += 1
-                if labels[i] == predicted[i]:
-                    correct += 1
+
+        # predicted = predicted.squeeze()
+        # predicted = predicted.cpu().data.numpy()
+        #
+        # labels = labels.cpu().data.numpy()
+        # labels = list(labels.argmax(axis=1).squeeze())
+
+        # for i in range(len(labels)):
+        #     total += 1
+        #     if labels == predicted[i]:
+        #         correct += 1
     print("Acc: %.4f" % (100 * float(correct) / total))
+        # get the inputs
+
 
 
 

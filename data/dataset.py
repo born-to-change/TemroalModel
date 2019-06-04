@@ -47,7 +47,7 @@ def load_rgb_frames(image_dir, vid, start, num):
 
     frames = []
     labels = []
-    for i in range(start, start+num):
+    for i in range(start, start+num,2):
 
         img = cv2.imread(os.path.join(image_dir, vid+'_crop', str(i)+'.jpg'))  # [:, :, [2, 1, 0]]
         # print(os.path.join(image_dir, vid, image_tmpl.format(i)))
@@ -57,6 +57,7 @@ def load_rgb_frames(image_dir, vid, start, num):
             sc = 1 + d / min(w, h)
             img = cv2.resize(img, dsize=(0, 0), fx=sc, fy=sc)
         img = (img / 255.) * 2 - 1
+
         frames.append(img)
     return np.asarray(frames, dtype=np.float32)
 
@@ -66,7 +67,7 @@ def load_rgb_frames(image_dir, vid, start, num):
 def load_flow_frames(image_dir, vid, start, num):
     frames = []
 
-    for i in range(start, start + num, 30):
+    for i in range(start, start + num):
         imgx = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_x', i)), cv2.IMREAD_GRAYSCALE)
         imgy = cv2.imread(os.path.join(image_dir, vid+'_crop', flow_tmpl.format('flow_y', i)), cv2.IMREAD_GRAYSCALE)
 
@@ -120,8 +121,111 @@ def make_dataset(output_dir, split_file, mapping_file, gth_dir, numclass=6):
 
     return dataset
 
+def make_full_dataset(output_dir, split_file, mapping_file, gth_dir, numclass=6):
+    dataset = []
+
+    #  生成label与实体的 dict
+    file_ptr = open(mapping_file, 'r')
+    actions = file_ptr.read().split('\n')[:-1]
+    file_ptr.close()
+    actions_dict = dict()
+    for a in actions:
+        actions_dict[a.split()[1]] = int(a.split()[0])
+
+    sp = open(split_file, 'r')
+    vid_list = sp.read().split('\n')[:-1]
+    for vid in vid_list:
+        # 生成视频label list
+        gth_list = open(os.path.join(gth_dir, vid), 'r')
+        gth_list = gth_list.read().split('\n')[:-1]
+        gth_list = [actions_dict[x] for x in gth_list]
+
+        video = vid.split('.')[0]
+        vid_frame_path = os.path.join(output_dir, video+'_crop')
+        vid_frames_list = os.listdir(vid_frame_path)
+        # vid_frames = open(vid_frame_path, 'r')
+        # vid_frames_list = vid_frames.read()
+        # vid_frames.close()
+
+        num_frames = min(len(vid_frames_list)//3, len(gth_list))
+
+        #label = np.zeros((6, num_frames), np.float32)
+        label = []
+        for fr, cls in enumerate(gth_list[:num_frames]):
+            label.append(cls)  # binary classification
+
+        dataset.append((video, label, num_frames))
+    #print(label)
+    return dataset
+
+class MerlClassify(data_util.Dataset):
+    def __init__(self, split_file, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=None, save_dir='', num=0):
+        self.root = output_dir
+        self.save_dir = save_dir
+        self.mode = mode
+        self.split_file = split_file
+        self.transforms = transforms
+        self.data = make_dataset(output_dir, split_file, mapping_file, gth_dir, numclass)
 
 
+    def __getitem__(self, index):
+        vid, label, nf = self.data[index]
+
+        start_f = random.randint(1, nf-65)
+
+        if self.mode == 'rgb':
+            imgs = load_rgb_frames(self.root, vid, start_f, 64) # (bz, 680,920,3)
+            #mmcv.imshow(imgs[-1])
+            #imgs = self.transforms(imgs)
+
+            #mmcv.imshow(imgs[-1])
+
+            # flow_imgs = load_flow_frames('/disk2/lzq/data/MERL/opticalflow', vid, start_f, 128*8)  # (128,256,340,2)
+            # flow_imgs = self.transforms(flow_imgs)
+            # imgs = np.concatenate((imgs, flow_imgs), axis=-1)
+
+        else:
+            imgs = load_flow_frames(self.root, vid, start_f, 64)
+        label = np.array(label[:, start_f:start_f+64])
+        imgs = self.transforms(imgs)
+        # cls = label.max()
+        # label = np.zeros((1, 6), np.float32)
+        # label[:, cls] = 1
+
+        return video_to_tensor(imgs), torch.from_numpy(label), vid
+
+        # clips = torch.FloatTensor()
+        # gt = []
+        # if os.path.exists(os.path.join(self.save_dir, vid + '.npy')):
+        #     return 0, 0, vid
+        #
+        # label_dict={}
+        # for x in range(1, nf+1):
+        #     label_dict[x] = label[x-1]
+        #
+        # during = 48
+        # if nf>15000:
+        #     during =48
+        # if nf>30000:
+        #     during = 96
+        # for i in range(0, nf+1, during):
+        #     if i+49>nf:
+        #         continue
+        #     else:
+        #         start_frame = max(i, 1)
+        #     if self.mode == 'rgb':
+        #         imgs, labels = load_rgb_frames(self.root, vid, start_frame, 48, label_dict)
+        #     else:
+        #         imgs, labels = load_flow_frames(self.root, vid, start_frame, 48, label_dict)
+        #     imgs = self.transforms(imgs)
+        #     clips.append(imgs)
+        #     gt.append(labels)
+        #
+        # return torch.Tensor(clips), torch.Tensor(gt), vid
+
+
+    def __len__(self):
+        return len(self.data)
 
 class Merl(data_util.Dataset):
     def __init__(self, split_file, root, output_dir, mode, mapping_file, gth_dir, numclass, transforms=None, save_dir='', num=0):
@@ -136,14 +240,26 @@ class Merl(data_util.Dataset):
     def __getitem__(self, index):
         vid, label, nf = self.data[index]
 
-        start_f = random.randint(1,nf)
+        start_f = random.randint(1, nf-64*2)
 
         if self.mode == 'rgb':
-            imgs = load_rgb_frames(self.root, vid, 1, nf)
-        else:
-            imgs = load_flow_frames(self.root, vid, 1, nf)
-        label = label[:, :]
+            imgs = load_rgb_frames(self.root, vid, start_f, 64*2) # (bz, 680,920,3)
+            #mmcv.imshow(imgs[-1])
+            #imgs = self.transforms(imgs)
 
+            #mmcv.imshow(imgs[-1])
+
+            # flow_imgs = load_flow_frames('/disk2/lzq/data/MERL/opticalflow', vid, start_f, 128*8)  # (128,256,340,2)
+            # flow_imgs = self.transforms(flow_imgs)
+            # imgs = np.concatenate((imgs, flow_imgs), axis=-1)
+
+        else:
+            imgs = load_flow_frames(self.root, vid, start_f, 64*2)
+        label = np.array(label[:,start_f:start_f+64*2:2])
+
+        #cls = label.max()
+        #label = np.zeros((1, 6), np.float32)
+        #label[:, cls] = 1
         imgs = self.transforms(imgs)
 
         return video_to_tensor(imgs), torch.from_numpy(label), vid

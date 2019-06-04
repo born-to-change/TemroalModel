@@ -126,8 +126,8 @@ class ResNet(nn.Module):
                   200: [3, 24, 36, 3]}
         assert layers[depth], 'invalid detph for ResNet (depth should be one of 18, 34, 50, 101, 152, and 200)'
 
-        self.inplanes = 64
-        self.conv1 = nn.Conv2d(3, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
+        #self.inplanes = 64
+        self.conv1 = nn.Conv2d(5, self.inplanes, kernel_size=7, stride=2, padding=3, bias=False)
         self.bn1 = nn.BatchNorm2d(64)
         self.relu = nn.ReLU(inplace=True)
         self.maxpool = nn.MaxPool2d(kernel_size=3, stride=2, padding=1)
@@ -164,7 +164,7 @@ class ResNet(nn.Module):
         return nn.Sequential(*layers)
 
     def forward(self, x):
-        x = self.conv1(x) # x:(64,2,224,224)
+        x = self.conv1(x)  # x: (64,2,224,224)   rgb+flow: (bz, 5, 224,224)
         x = self.bn1(x)
         x = self.relu(x)
         x = self.maxpool(x)
@@ -224,7 +224,7 @@ class TCN(nn.Module):
 
         self.cnn = ResNet(inplanes=64, depth=18, num_classes=6)
         self.tcn = TemporalConvNet(input_size, num_channels, kernel_size=kernel_size, dropout=dropout)
-        self.conv = nn.Conv1d(128, n_classes, kernel_size=1)
+        self.conv = nn.Conv1d(64, n_classes, kernel_size=1)
         #self.linear = nn.Linear(num_channels[-1], n_classes)
 
     def forward(self, inputs):
@@ -232,8 +232,18 @@ class TCN(nn.Module):
         inputs = inputs.squeeze().permute(1,0,2,3)
         out = self.cnn(inputs)  # (1,2,64,224,224)
         # out: (1, 152600)
+        #if out.shape[0]==1 :
         out = out.squeeze()
-        out = self.tcn(out.unsqueeze(0).permute(0,2,1))
+
+
+        out = self.tcn(out.unsqueeze(0).permute(0, 2, 1))  # (1,64,128)
+
+        # else:
+        #     out = out.squeeze()
+        #
+        #     out = self.tcn(out.permute(0, 2, 1))  # (1,64,128)
+
+
         y = self.conv(out)
         return y
         #o = self.linear(y1[:, :, -1])
